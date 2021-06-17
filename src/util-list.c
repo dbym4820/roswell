@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #include "util.h"
 
 LVal cons(void* v,LVal l) {
@@ -58,6 +57,15 @@ LVal find(LVal v,LVal l,Compare2 c) {
       return first(l);
   }
   return 0;
+}
+
+int position(LVal v,LVal l,Compare2 c) {
+  int pos = 0;
+  for(;l;l=Next(l),++pos) {
+    if(c(v,first(l)))
+      return pos;
+  }
+  return -1;
 }
 
 int firsti(LVal v) {

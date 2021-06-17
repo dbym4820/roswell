@@ -1,8 +1,9 @@
-/* -*- tab-width : 2 -*- */
 #include "opt.h"
 #include "cmd-run.h"
 #include "gend.h"
-
+#ifdef HAVE_GNU_LIBC_VERSION_H
+#include <gnu/libc-version.h>
+#endif
 struct proc_opt internal;
 
 DEF_SUBCMD(cmd_download) {
@@ -17,11 +18,19 @@ DEF_SUBCMD(cmd_download) {
                     opt>2?0:opt):0;
 }
 
+DEF_SUBCMD(cmd_head) {
+  int argc=length(arg_);
+  int opt=argc>2?atoi(firsts(nthcdr(3,arg_))):0;
+  if(argc==2)
+    return download_head(firsts(nthcdr(1,arg_)),opt>2?0:opt);
+  return 1;
+}
+
 DEF_SUBCMD(cmd_uname) {
   int argc=length(arg_);
 
   if(argc==1) {
-    printf("%s\n",uname());
+    printf("%s\n",uname_s());
   }else if(argc==2) {
     if(strncmp(firsts(nthcdr(1,arg_)),"-m",2)==0)
       printf("%s\n",uname_m());
@@ -92,9 +101,15 @@ DEF_SUBCMD(cmd_internal_version) {
     }else if(strcmp(arg1,"revision")==0) {
       printf("%s\n",ROS_REVISION);
     }else if(strcmp(arg1,"sbcl-bin-version-uri")==0) {
-      printf("%s\n",PLATFORM_HTML_URI);
+      printf("%s\n",PLATFORM_TSV_URI);
+    }else if (strcmp(arg1,"sbcl-bin-variant")==0) {
+      printf("%s\n",SBCL_BIN_VARIANT);
     }else if(strcmp(arg1,"sbcl-bin-uri")==0) {
       printf("%s\n",SBCL_BIN_URI);
+    }else if(strcmp(arg1,"glibc")==0) {
+#ifdef HAVE_GNU_LIBC_VERSION_H
+      printf("%s\n",gnu_get_libc_version());
+#endif
     }else
       return 1;
   }
@@ -126,6 +141,7 @@ struct proc_opt* register_cmd_internal(struct proc_opt* top_) {
   cmds=add_command(cmds,"man"     ,NULL,cmd_man,0,1);
   cmds=add_command(cmds,"tar"     ,NULL,cmd_tar,0,1);
   cmds=add_command(cmds,"download",NULL,cmd_download,0,1);
+  cmds=add_command(cmds,"head",NULL,cmd_head,0,1);
   cmds=add_command(cmds,"uname",NULL,cmd_uname,0,1);
   cmds=add_command(cmds,"which",NULL,cmd_which,0,1);
   cmds=add_command(cmds,"impl",NULL,cmd_impl,0,1);
@@ -166,13 +182,16 @@ char* lispdir(void) {
   ros_bin[strlen(ros_bin)-1]='\0';
   ros_bin=pathname_directory(ros_bin);
 
+  /* $(bindir)/../etc/roswell/ */
+  LISPDIR_CANDIDATE(cat(ros_bin,"etc"SLASH PACKAGE_NAME SLASH,NULL));
   /* $(bindir)/../lisp/ */
   LISPDIR_CANDIDATE(cat(ros_bin,"lisp",SLASH,NULL));
-  /* $(bindir)/../etc/roswell/ */
-  LISPDIR_CANDIDATE(cat(ros_bin,"etc"SLASH PACKAGE_STRING SLASH,NULL));
   s(ros_bin);
-  result=append_trail_slash(q(LISP_PATH));
+  result=append_trail_slash(LISP_PATH);
   return q(result);
+}
+char* patchdir(void) {
+  return append_trail_slash(PATCH_PATH);
 }
 
 DEF_SUBCMD(opt_version) {

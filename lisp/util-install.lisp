@@ -10,13 +10,16 @@
 
 (defvar *ros-path* nil)
 (defvar *env* "ROSINSTALL")
-(defvar *checkout-default* 'checkout-github)
+(defvar *checkout-default* '(checkout-github))
 
 (defun install-impl (impl version argv cmds)
+  "See install-impl-if-probed."
   (when cmds
     (let ((param `(t :target ,impl :version ,version :version-not-specified nil :argv ,argv)))
       (handler-case
           (loop for call in cmds
+                when (roswell:verbose)
+                  do (format *error-output* "~&:<install ~A~%~S~%:>" call (rest param))
                 do (setq param (funcall call (rest param)))
                 while (first param))
         #+sbcl
@@ -26,6 +29,8 @@
           (roswell:roswell `(,(format nil "deleteing ~A/~A" (getf (cdr param) :target) (getf (cdr param) :version))) :string t))))))
 
 (defun install-impl-if-probed (imp version argv)
+  "Install the implementation when there is a file named install-XXXX (e.g. install-sbcl) in the roswell directory.
+These files contain the `recipes` for download/build the binaries/sources of these implementations."
   (values (let ((fun (module "install" imp)))
             (when fun
               (install-impl imp version argv (funcall fun :install))
@@ -34,6 +39,7 @@
           argv))
 
 (defun install-script-if-probed (impl/version)
+  "Install a .ros script (ros install XXX.ros or just ros install XXX if it is in the current directory)"
   (let* (sub
          (result (and (pathname-name impl/version)
                       (probe-file (setf sub (make-pathname :defaults impl/version :type "ros"))))))
@@ -42,6 +48,7 @@
       result)))
 
 (defun install-system-if-probed (imp)
+  "Install the quicklisp system."
   (let ((result (or (read-call "ql-dist:find-system" imp)
                     (read-call "ql:where-is-system" imp))))
     (when (and result
@@ -50,6 +57,8 @@
       result)))
 
 (defun install-localpath-if-probed (namestring)
+  "To install a system by local path. NAMESTRING should be a path to an asdf file.
+To differentiate it from the system with the same name in quicklisp, the path should start with '.', contain at least one '/'."
   (when (and (eql #\. (aref namestring 0))
              (find #\/ namestring))
     (let* ((path (truename namestring))
@@ -72,11 +81,14 @@
     (nreverse
      (loop for link in (read-call "plump:get-elements-by-tag-name" elts "link")
            for href = (read-call "plump:get-attribute" link "href")
-           when (eql (aref href 0) #\/)
-           collect (funcall filter href)))))
+           when (funcall filter href)
+           collect it))))
 
 (defun checkout-github (impl version tag)
-  (clone-github impl version :path "local-projects" :branch tag))
+  "Install a system from github."
+  (if (head (format nil "https://github.com/~A/~A" impl version))
+      (clone-github impl version :path "local-projects" :branch tag)
+      (format *error-output* "github: ~A/~A not exists~%" impl version)))
 
 (defun install (argv)
   "Install an implementation or a system.
@@ -111,7 +123,7 @@
           ${roswell-home}/local-projects/some/repo
       
  "
-  (read-call "quicklisp-client:register-local-projects")
+  (read-call "roswell.util:local-project-build-hash" :rebuild t)
   (loop
     with *ros-path* = (make-pathname :defaults (opt "argv0"))
     with changed
@@ -136,9 +148,17 @@
          ((install-localpath-if-probed impl/version/tag))
          ;;github registerd system like "fukamachi/sblint" checkout
          (version
-          (funcall *checkout-default* impl version tag)
-          (read-call "quicklisp-client:register-local-projects")
-          (or (and (install-impl-if-probed version nil argv)
+          (loop for f in *checkout-default*
+                until (funcall f impl version tag))
+          (read-call "roswell.util:local-project-build-hash" :rebuild t)
+          (or (let ((project (merge-pathnames (format nil "local-projects/~A/~A/project.lisp" impl version)
+                                              (roswell.util:checkoutdir))))
+                (when (probe-file project)
+                  (ignore-errors
+                    (let ((system (with-open-file (i project)
+                                    (second (assoc "asd" (second (second (first (nth 1 (read i))))) :test #'equal)))))
+                      (install-system-if-probed system)))))
+              (and (install-impl-if-probed version nil argv)
                    (or (setf argv nil) t))
               (install-system-if-probed version)))
          (t (format *error-output* "'~A' is not a valid target for 'install' -- It should be a name of either:

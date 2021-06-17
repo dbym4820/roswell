@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #include "opt.h"
 
 int download_count=0;
@@ -91,6 +90,7 @@ int download_simple (char* uri,char* path,int opt) {
     int lenuri=strlen(uri);
     int https=(lenuri>5 && strncmp("https",uri,5)==0);
     int httponly= get_opt("proxy.http.only",0) && strcmp(get_opt("proxy.http.only",0),"1")==0;
+    int ignoressl= get_opt("ssl.ignore_verify",0) && strcmp(get_opt("ssl.ignore_verify", 0), "1") ==0;
     if(current&& ((https && !httponly) || !https)) {
       /*<[protocol://][user:password@]proxyhost[:port]>*/
       char *reserve,*protocol=NULL,*userpwd=NULL,*port=NULL,*uri=NULL;
@@ -122,6 +122,10 @@ int download_simple (char* uri,char* path,int opt) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
     curl_easy_setopt(curl,CURLOPT_WRITEDATA,bodyfile);
+    if(ignoressl) {
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0); 
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
+    }
     res=curl_easy_perform(curl);
     if(res != CURLE_OK && verbose) {
       fprintf(stderr, "curl_easy_perform() failed: %s\n",
@@ -136,5 +140,29 @@ int download_simple (char* uri,char* path,int opt) {
   int ret=rename_file(path_partial,path);
   s(path_partial);
   return ret?0:7;
+}
+
+int download_head (char* uri,int opt) {
+  download_out=(0==opt)?stderr:stdout;
+  if(verbose)
+    fprintf(download_out,"head:%s\n",uri);
+  CURL *curl;
+  CURLcode res=!CURLE_OK;
+  curl = curl_easy_init();
+  curl_easy_setopt(curl, CURLOPT_URL, uri);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, PACKAGE_STRING);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_NOBODY, 1);
+  res = curl_easy_perform(curl);
+  long http_code = 0;
+  curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &http_code);
+  curl_easy_cleanup(curl);
+  if(res != CURLE_OK)
+    return 2;
+  if(verbose)
+    fprintf(download_out,"head code:%ld\n",http_code);
+  if(200 <= http_code && http_code < 300)
+    return 0;
+  return 1;
 }
 #endif

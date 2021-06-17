@@ -39,7 +39,7 @@
 
 (defun sbcl-get-version ()
   (format *error-output* "Checking version to install....~%")
-  (github-version (sbcl-git-version-uri) "sbcl" (lambda (href) (subseq href (1+ (position #\- href :from-end t))))))
+  (github-version (sbcl-git-version-uri) "sbcl" (lambda (href) (ignore-errors (subseq href (1+ (position #\- href :from-end t)))))))
 
 (defun sbcl-msys (argv)
   (unless (or (roswell:getenv "MSYSCON")
@@ -73,9 +73,9 @@
              (when default
                (set-opt name (eql default t)))
              (with name)))
-  (cons (if (opt "core-compression")
-            (require-system-package "zlib")
-            t)
+  (cons (if (eql (opt "core-compression") :false)
+            t
+            (require-system-package "zlib"))
         argv))
 
 (defun sbcl-start (argv)
@@ -85,30 +85,44 @@
   (cons t argv))
 
 (defun sbcl-download (argv)
-  (set-opt "download.uri" (format nil "~@{~A~}" (sbcl-uri) "sbcl-"
-                                  (getf argv :version) ".tar.gz"))
-  (set-opt "download.archive" (let ((pos (position #\/ (opt "download.uri") :from-end t)))
-                                (when pos
-                                  (merge-pathnames (format nil "archives/~A" (subseq (opt "download.uri") (1+ pos))) (homedir)))))
   (cond
-    ((equal "git" (getf argv :version)) ()) ;; skip downloading if version is 'git'
-    (t `((,(opt "download.archive") ,(opt "download.uri"))))))
+    ((or (equal "git" (getf argv :version))
+         (probe-file (merge-pathnames "src/sbcl-git/" (homedir))))
+     (set-opt "src" (merge-pathnames "src/sbcl-git/" (homedir)))
+     ()) ;; skip downloading if version is 'git'
+    (t
+     (set-opt "download.uri" (format nil "~@{~A~}" (sbcl-uri) "sbcl-"
+                                     (getf argv :version) ".tar.gz"))
+     (set-opt "download.archive" (let ((pos (position #\/ (opt "download.uri") :from-end t)))
+                                   (when pos
+                                     (merge-pathnames (format nil "archives/~A" (subseq (opt "download.uri") (1+ pos))) (homedir)))))
+     `((,(opt "download.archive") ,(opt "download.uri"))))))
 
 (defun sbcl-expand (argv)
-  (let ((h (homedir))
-        (v (getf argv :version)))
+  (let* ((h (homedir))
+         (v (getf argv :version))
+         (gitsrc (merge-pathnames "src/sbcl-git/" h)))
     (cond
       ((equal "git" (getf argv :version))
-       (unless (probe-file (merge-pathnames "src/sbcl-git" h))
+       (unless (probe-file gitsrc)
          (clone-github "sbcl" "sbcl" :path (merge-pathnames "src/" h))
          (ql-impl-util:rename-directory
           (merge-pathnames "src/sbcl/sbcl" h)
           (merge-pathnames "src/sbcl-git" h))
          (uiop/filesystem:delete-directory-tree (merge-pathnames "src/sbcl/" h) :validate t)))
+      ((probe-file gitsrc)
+       (funcall 'sbcl-patch argv :revert t) ;; revert patch.
+       (chdir gitsrc)
+       (uiop/run-program:run-program "git checkout master")
+       (uiop/run-program:run-program "git pull")
+       (or (uiop/run-program:run-program
+            (format nil "git checkout ~A" (getf argv :version)) :ignore-error-status t)
+           (uiop/run-program:run-program
+            (format nil "git checkout sbcl-~A" (getf argv :version)))))
       (t
        (format t "~%Extracting archive:~A~%" (opt "download.archive"))
        (expand (opt "download.archive")
-               (merge-pathnames "src/" h))
+               (ensure-directories-exist (merge-pathnames "src/" h)))
        (ignore-errors
         (ql-impl-util:rename-directory
          (merge-pathnames (format nil "src/sbcl-sbcl-~A" v) h)
@@ -120,17 +134,25 @@
           (format o "~S~%" v))))))
   (cons (not (opt "until-extract")) argv))
 
-(defun sbcl-patch (argv)
+(defvar *sbcl-patch-list-cache* nil)
+(defun sbcl-patch-list ()
+  (or *sbcl-patch-list-cache*
+      (setf *sbcl-patch-list-cache*
+            (loop for i in (list
+                            #+darwin "sbcl-posix-tests.patch"
+                            #+linux  "sbcl-1.3.11.patch")
+               collect (probe-file (merge-pathnames i (opt "patchdir")))))))
+
+(defun sbcl-patch (argv &key revert (src (opt "src")))
   (unless (opt "sbcl.patchless")
-    (let ((file (merge-pathnames "tmp/sbcl.patch" (homedir))))
-      (dolist (uri (list
-                    #+darwin (sbcl-patch1-uri)
-                    #+linux  (sbcl-patch2-uri)))
-        (format t "~&Downloading patch: ~A~%" uri)
-        (download uri file)
-        (chdir (opt "src"))
-        (format t "~%Applying patch:~%")
-        (uiop/run-program:run-program "patch -p0 -N" :output t :input file :ignore-error-status t))))
+    (dolist (patch (sbcl-patch-list))
+      (format t "~%Applying patch:~A~%" (file-namestring patch))
+      (chdir src)
+      (uiop/run-program:run-program
+       (if revert
+           "patch -p0 -R -r -"
+           "patch -p0 -N -r -")
+       :output t :input patch :ignore-error-status t)))
   (cons t argv))
 
 (defun sbcl-config (argv)
@@ -160,7 +182,7 @@
                        :direction :output :if-exists :append :if-does-not-exist :create)
     (format out "~&--~&~A~%" (date))
     (let* ((src (opt "src"))
-           (compiler (format nil "~A -L ~A --no-rc run -- --disable-debugger" *ros-path* (opt "sbcl.compiler")))
+           (compiler (format nil "~A -L ~A without-roswell=t run -- --no-userinit --no-sysinit" *ros-path* (opt "sbcl.compiler")))
            (cmd (list (sh) "-lc" (format nil "cd ~S;~A ~A ~A ~A"
                                          (#+win32 mingw-namestring #-win32 princ-to-string src)
                                          (or #-win32 (sh) "")

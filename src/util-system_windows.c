@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #include "util.h"
 
 #ifdef HAVE_WINDOWS_H
@@ -106,8 +105,8 @@ int System(const char* command) {
   DWORD r=WaitForSingleObject(pi.hProcess, INFINITE);
   if(WAIT_OBJECT_0!=r)
     return 1;
-  if(!GetExitCodeProcess(pi.hProcess,&ExitCode)||ExitCode)
-    return ExitCode||1;
+  if(GetExitCodeProcess(pi.hProcess,&ExitCode))
+    return ExitCode;
   return 0;
 }
 

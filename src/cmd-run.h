@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #ifndef __CMD_RUN_H__
 #define __CMD_RUN_H__
 
@@ -22,8 +21,11 @@ extern char** cmd_run_ecl(int argc,char** argv,struct sub_command* cmd);
 extern char** cmd_run_abcl(int argc,char** argv,struct sub_command* cmd);
 extern char** cmd_run_cmu(int argc,char** argv,struct sub_command* cmd);
 extern char** cmd_run_acl(int argc,char** argv,struct sub_command* cmd);
+extern char** cmd_run_lispworks(int argc,char** argv,struct sub_command* cmd);
+extern char** cmd_run_mkcl(int argc,char** argv,struct sub_command* cmd);
+extern char** cmd_run_npt(int argc,char** argv,struct sub_command* cmd);
 extern LVal register_runtime_options();
-int setup(char* target);
+int setup(char* target,char* env,char* impl);
 #define SETUP_SYSTEM(sys,msg) {\
     cond_printf(0,"%s",msg);   \
     cond_printf(1,"%s\n",sys); \

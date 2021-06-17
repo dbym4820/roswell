@@ -5,7 +5,22 @@
 
 (defparameter *clasp-version*
   ;; alias commit external-clasp-version
-  '(("2017-10-12" "d9730c986661441db19064ccbd6961def8a7f793" "5.0")
+  '(("2019-09-29" "f0cb8960867be6ed58a82066abb0da2df9da72b3" "6.0.1")
+    ("2019-07-09" "5dce7a8687d761bc91a96e84c977f95e5eec666a" "6.0.1")
+    ("2019-06-25" "bbe178339418e9ace57a59c5df22cc677539ea6c" "6.0.1")
+    ("2019-03-30" "e2c7701700189c9a127d0f9c0a90993ed4a8da1a" "6.0.1")
+    ("2019-01-19" "bae8f30824d4f9cc2dfb6f9c9ade7ddefdff92c3" "6.0.1")
+    ("2018-11-28" "2f2b52ccb750048460562b5987a7eaf7a1aa4445" "6.0.1")
+    ("2018-05-17" "b561e8fa7300ae774e7d75eb6d6514926657c557" "5.0-20171109")
+    ("2018-04-01" "d0de68494af19e8b52fb56d83399b0c27b22a528" "5.0")
+    ("2018-03-11" "ee3e6c7f94e1e9a692541caa9f71ba73cfdbc292" "5.0")
+    ("2018-02-05" "948467383606819bedafd2998c2139e190bd3391" "5.0")
+    ("2017-12-20" "46634ed2f4dd927059e9d3ab00a00aee1f8991e3" "5.0")
+    ("2017-12-12" "141be6a01d806efc64725e516dce8a58d3d1f732" "5.0")
+    ("2017-11-20" "97f9f147a35d9b18d9581bcd7c816aa45aecd894" "5.0")
+    ("2017-11-05" "fb57b58cb27527469a0798ae5645e9e87bad7de4" "5.0")
+    ("2017-10-27" "c4c0e740dba84dc3cdf4fd3dfa88404cb05f1932" "5.0")
+    ("2017-10-12" "d9730c986661441db19064ccbd6961def8a7f793" "5.0")
     ("2017-09-17" "04a94c3824892c7c5f6eec142f45868d5496571b" "5.0")
     ("2017-08-24" "96f3376fe238510ba1f97553601f500f4fe41196" "3.9.1")
     ("2017-08-15" "c0af3c5839ab5d5ef918f9732abbf6b6e7ef4f85" "3.9.1")
@@ -48,8 +63,9 @@
     (unless (probe-file output)
       (format t "git clone clasp~%")
       (uiop/run-program:run-program
-       (list "git" "clone" "https://github.com/drmeister/clasp.git" output)
+       (list "git" "clone" "https://github.com/clasp-developers/clasp.git" output)
        :output t :ignore-error-status nil))
+
     (chdir (opt "src"))
     (format t "git fetch~%")
     (uiop/run-program:run-program
@@ -70,11 +86,14 @@
                                     (homedir))))
     (with-open-file (out (merge-pathnames "wscript.config" (opt "src"))
                          :direction :output :if-exists :supersede)
-      (format out "EXTERNALS_CLASP_DIR = '~A'~%" (namestring (merge-pathnames (format nil "lib/~A/~A/externals-clasp/~A"
-                                                                                      (uname-m) (uname)
-                                                                                      (clasp-get-externals-clasp-version argv))
-                                                                              (homedir))))
-      (format out "SBCL                = '~A'~%" (namestring (merge-pathnames "bin/sbcl" sbcl-base))))
+      ;; replace externals-clasp to externals_clasp
+      ;; skip version check of clasp's wscript
+      (let* ((path (format nil "lib/~A/~A/externals_clasp/~A/build/release/bin/llvm-config"
+                           (uname-m) (uname)
+                           (clasp-get-externals-clasp-version argv))))
+        (format out "LLVM_CONFIG_BINARY  = '~A'~%" (namestring (merge-pathnames path (homedir)))))
+      (format out "SBCL                = '~A'~%" (namestring (merge-pathnames "bin/sbcl" sbcl-base)))
+      (format out "USE_PARALLEL_BUILD  = True~%"))
     (setenv "SBCL_HOME" (namestring (merge-pathnames "lib/sbcl" sbcl-base)))
     (format t "with sbcl-bin(~A) build clasp" sbcl-base))
   (with-open-file (out (ensure-directories-exist
@@ -84,7 +103,7 @@
                        :direction :output :if-exists :append :if-does-not-exist :create)
     (format out "~&--~&~A~%" (date))
     (let* ((src (opt "src"))
-           (cmd "./waf configure update_submodules build_cboehm")
+           (cmd "./waf configure build_dboehm")
            (*standard-output* (make-broadcast-stream out #+sbcl(make-instance 'count-line-stream))))
       (chdir src)
       (format t "~&~S~%" cmd)

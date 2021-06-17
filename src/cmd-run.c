@@ -1,6 +1,6 @@
-/* -*- tab-width : 2 -*- */
 #include "opt.h"
 #include "cmd-run.h"
+#include "cmd-install.h"
 DEF_SUBCMD(cmd_script_frontend);
 
 struct run_impl_t impls_to_run[]={
@@ -10,6 +10,7 @@ struct run_impl_t impls_to_run[]={
   {"ccl-bin",&cmd_run_ccl},
   {"ccl32",&cmd_run_ccl},
   {"clasp",&cmd_run_clasp},
+  {"clasp-bin",&cmd_run_clasp},
   {"clisp",&cmd_run_clisp},
   {"clisp32",&cmd_run_clisp},
   {"ecl",&cmd_run_ecl},
@@ -20,6 +21,9 @@ struct run_impl_t impls_to_run[]={
   {"acl",&cmd_run_acl},
   {"alisp",&cmd_run_acl},
   {"allegro",&cmd_run_acl},
+  {"lispworks",&cmd_run_lispworks},
+  {"mkcl",&cmd_run_mkcl},
+  {"npt",&cmd_run_npt},
 };
 
 struct proc_opt run;
@@ -38,16 +42,27 @@ DEF_SUBCMD(cmd_run) {
   }
 }
 
-int setup(char* target) {
+int setup(char* target,char* env,char* impl) {
   if(lock_apply("setup",2))
     return 0; /* lock file exists */
   char* v=verbose==1?"-v ":(verbose==2?"-v -v ":"");
   lock_apply("setup",0);
   cond_printf(1,"verbose-option:'%s'\n",v);
   char* version=get_opt(DEFAULT_IMPL".version",0);
-  if(!version)
-    SETUP_SYSTEM(cat(argv_orig[0]," ",v,"install "DEFAULT_IMPL,NULL),"Installing "DEFAULT_IMPL"...\n")
-  SETUP_SYSTEM(cat(argv_orig[0]," ",v,"setup ",target,NULL),"Making core for Roswell...\n")
+  char* path=s_cat(configdir(),q("config"),NULL);
+  if(!version) {
+    SETUP_SYSTEM(cat(argv_orig[0]," ",v,"install "DEFAULT_IMPL,NULL),"Installing "DEFAULT_IMPL"...\n");
+  }else if(strcmp(version,"system")==0) {
+    set_defaultlisp(DEFAULT_IMPL,"system");
+  }
+  global_opt=load_opts(path),s(path);
+  version=get_opt(DEFAULT_IMPL".version",0);
+  if(strcmp(env,"-")!=0) {
+    char *cmd =cat(argv_orig[0]," init env ",env,NULL);
+    System(cmd);
+    s(cmd);
+  }
+  SETUP_SYSTEM(cat(argv_orig[0]," -N ",env," -L "DEFAULT_IMPL"/",version," ",v,"setup ",target,NULL),"Making core for Roswell...\n");
   lock_apply("setup",1);
   return 1;
 }
@@ -65,13 +80,13 @@ char* determin_impl(char* impl) {
     if(impl) {
       char* opt=s_cat(q(impl),q("."),q("version"),NULL);
       version=get_opt(opt,1);
+      if(version)
+        version=q(version);
       s(opt);
     }
     if(!impl)
       impl=DEFAULT_IMPL;
     impl=q(impl);
-    if(version)
-      version=q(version);
   }
   if(!version&&strcmp(impl,DEFAULT_IMPL)!=0) {
     cond_printf(1,"once!%s,%s\n",impl,version);
@@ -81,10 +96,10 @@ char* determin_impl(char* impl) {
   if(!(impl && version)) {
     s(impl);
     impl=q(DEFAULT_IMPL);
-    setup(PACKAGE);
-    char* path=s_cat(configdir(),q("config"),NULL);
-    global_opt=load_opts(path),s(path);
+    setup(PACKAGE,"-",impl);
     version=get_opt(DEFAULT_IMPL".version",0);
+    if(version)
+      version=q(version);
   }
   return s_cat(impl,q("/"),version,NULL);
 }
@@ -108,6 +123,8 @@ void set_env_opt(char* path) {
           value=subseq(buf,last,i);
           if(strcmp("quicklisp",name)==0) {
             set_opt(&local_opt,"quicklisp",s_escape_string(cat(configdir(),"env"SLASH,value,SLASH,"lisp",SLASH,"quicklisp",SLASH,NULL)));
+          }else if(strcmp("default.lisp",name)==0) {
+            set_opt(&local_opt,q("lisp"),q(value));
           }else if(strcmp("dists",name)==0) {
           }else
             set_opt(&local_opt,name,q(value));
@@ -123,14 +140,15 @@ void set_env_opt(char* path) {
 
 void star_set_opt(void) {
   char* config=configdir();
-  char*lisp=get_opt("lisp",1);
+  char*lisp=NULL;
   char*image=get_opt("image",0);
   if(!get_opt(PACKAGE_NAME"env",0))
     set_env_opt("."PACKAGE_NAME"env");
   /*If 'roswellenv' not set the below would endup fail to open cause it will be taken as a directory.*/
   set_env_opt(s_escape_string(cat(configdir(),"env",SLASH,get_opt(PACKAGE_NAME"env",1),SLASH,"config",NULL)));
-
-  lisp=lisp?lisp:get_opt("*lisp",0);
+  lisp= get_opt("lisp",1); /*-L in fourth line of ros script or default.lisp in env file.*/
+  if(!lisp) lisp= get_opt("*lisp",0); /*-L via command line.*/
+  if(!lisp) lisp= get_opt("default.lisp",0);/*default.lisp via default config file.*/
   set_opt(&local_opt,"impl",determin_impl(lisp));
   if(!get_opt("quicklisp",0))
     set_opt(&local_opt,"quicklisp",s_escape_string(cat(config,"lisp",SLASH,"quicklisp",SLASH,NULL)));
@@ -139,9 +157,10 @@ void star_set_opt(void) {
   set_opt(&local_opt,"homedir",q(config));
   set_opt(&local_opt,"verbose",qsprintf(10,"%d",verbose));
   set_opt(&local_opt,"lispdir",q(lispdir()));
+  set_opt(&local_opt,"patchdir",append_trail_slash(q(patchdir())));
   if(get_opt("asdf.version",0))
     set_opt(&local_opt,"asdf",get_opt("asdf.version",0));
-  set_opt(&local_opt,"uname",uname());
+  set_opt(&local_opt,"uname",uname_s());
   set_opt(&local_opt,"uname-m",uname_m());
   s(config);
 }
@@ -184,7 +203,7 @@ char** determin_args(int argc,char **argv) {
 DEF_SUBCMD(cmd_run_star) {
   int argc=length(arg_);
   char** argv=stringlist_array(arg_);
-  cond_printf(1,"cmd_run_star:%d:%s\n,argv[0]",argc,argv[0]);
+  cond_printf(1,"cmd_run_star:%d:argv[0],%s\n",argc,argv[0]);
   star_set_opt();
   star_rc();
 

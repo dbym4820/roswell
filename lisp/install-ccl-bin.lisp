@@ -4,17 +4,8 @@
 (in-package :roswell.install.ccl-bin)
 
 (defun ccl-bin-get-version ()
-  (let ((file (merge-pathnames "tmp/ccl-bin.html" (homedir))))
-    (format *error-output* "Checking version to install...~%")
-    (unless (and (probe-file file)
-                 (< (get-universal-time) (+ (* 60 60) (file-write-date file))))
-      (download (ccl-bin-uri) file))
-    (loop for link in (plump:get-elements-by-tag-name (plump:parse file) "a")
-          for href = (plump:get-attribute link "href")
-          for len = (length href)
-          when (and (digit-char-p (aref href 0))
-                    (char= (aref href (1- len)) #\/))
-          collect (string-right-trim "/" href))))
+  (format *error-output* "Checking version to install...~%")
+  (cddr (github-version (ccl-git-version-uri) "ccl_bin" (lambda (href) (subseq href (1+ (position #\/ href :from-end t)))))))
 
 (defvar *ccl-uname-m-alist*
   '(("x86-64" . "x86")
@@ -37,9 +28,10 @@
   (let ((uname (uname))
         (ccl-uname-m (ccl-uname-m)))
     (set-opt "as" (getf argv :version))
-    (set-opt "download.uri" (format nil "~@{~A~}" (ccl-bin-uri)
-                                    (getf argv :version) "/ccl-" (getf argv :version) "-" uname ccl-uname-m (if (equal uname "windows")
-                                                                                                                ".zip"".tar.gz")))
+    (set-opt "download.uri" (or (opt "download.uri")
+                                (format nil "~@{~A~}" (ccl-bin-uri)
+                                        (getf argv :version) "/ccl-" (getf argv :version) "-" uname ccl-uname-m (if (equal uname "windows")
+                                                                                                                    ".zip"".tar.gz"))))
     (set-opt "download.archive" (let ((pos (position #\/ (opt "download.uri") :from-end t)))
                                   (when pos
                                     (merge-pathnames (format nil "archives/~A" (subseq (opt "download.uri") (1+ pos))) (homedir)))))

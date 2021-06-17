@@ -1,10 +1,9 @@
-/* -*- tab-width : 2 -*- */
 #include "opt.h"
 
 char** cmd_run_cmu(int argc,char** argv,struct sub_command* cmd) {
   char* home=configdir();
   char* arch=uname_m();
-  char* os=uname();
+  char* os=uname_s();
   char* impl=(char*)cmd->name;
   char* version=(char*)cmd->short_name;
 
@@ -69,12 +68,10 @@ char** cmd_run_cmu(int argc,char** argv,struct sub_command* cmd) {
   ret=conss(q("-eval"),ret);
   ret=conss(s_cat(q("(progn(setq *load-verbose*()*compile-verbose*())#-ros.init(cl:load \""),s_escape_string(lispdir()),q("init.lisp"),q("\"))"),NULL),ret);
 
-  if(program || script) {
-    ret=conss(q("-eval"),ret);
-    ret=conss(s_cat(q("(ros:run '("),q(program?program:""),
-                    script?cat("(:script ",script,")(:quit ())",NULL):q(""),
-                    q("))"),NULL),ret);
-  }
+  ret=conss(q("-eval"),ret);
+  ret=conss(s_cat(q("(ros:run '("),q(program?program:""),
+                  script?cat("(:script ",script,")(:quit ())",NULL):q(""),
+                  q("))"),NULL),ret);
 
   for(i=1;i<argc;++i)
     ret=conss(q(argv[i]),ret);

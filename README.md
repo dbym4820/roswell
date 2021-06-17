@@ -1,8 +1,6 @@
 # Roswell - Common Lisp environment setup Utility.
 
 [![Build Status](https://travis-ci.org/roswell/roswell.svg?branch=master)](https://travis-ci.org/roswell/roswell)
-[![Circle CI](https://circleci.com/gh/roswell/roswell/tree/master.svg?style=svg)](https://circleci.com/gh/roswell/roswell/tree/master)
-[![Build status](https://ci.appveyor.com/api/projects/status/7jq0392ffqb4i3yn?svg=true)](https://ci.appveyor.com/project/snmsts/roswell-en89n)
 [![Quicklisp](http://quickdocs.org/badge/roswell.svg)](http://quickdocs.org/roswell/)
 
 Roswell is a Lisp implementation installer/manager, launcher, and much more!
@@ -21,14 +19,15 @@ Checkout [issues list](https://github.com/roswell/roswell/issues) if you are int
 
 See our [github wiki](https://github.com/roswell/roswell/wiki).
 We provide prebuilt binaries for homebrew on OSX, AUR on Arch and **also on Windows**.
-* [Linux (arch)](https://github.com/roswell/roswell/wiki/1.-Installation#linux)
-* [Mac OS X (brew)](https://github.com/roswell/roswell/wiki/1.-Installation#mac-os-x--homebrew)
-* [Windows](https://github.com/roswell/roswell/wiki/1.-Installation#windows)
-* [Building from Source](https://github.com/roswell/roswell/wiki/1.-Installation#building-from-source)
+* [Linux (arch)](https://github.com/roswell/roswell/wiki/Installation#linux)
+* [FreeBSD](https://github.com/roswell/roswell/wiki/Installation#freebsd)
+* [Mac OS X (brew)](https://github.com/roswell/roswell/wiki/Installation#mac-os-x--homebrew)
+* [Windows](https://github.com/roswell/roswell/wiki/Installation#windows)
+* [Building from Source](https://github.com/roswell/roswell/wiki/Installation#building-from-source)
 
 ## Features
 
-[Feature comparison is available!](https://github.com/roswell/roswell/wiki/0.-What's-the-Difference%3F)
+[Feature comparison is available!](https://github.com/roswell/roswell/wiki/How-is-Roswell-different)
 
 * Implementation Manager
 * Scripting environment (similar to cl-launch)
@@ -37,7 +36,7 @@ We provide prebuilt binaries for homebrew on OSX, AUR on Arch and **also on Wind
 * **Novel** : Better integration to the command-line interface (Bash completion, etc)
 * **Novel** : Infrastructure for bundling/installing the scripts to/from a quicklisp system
 * **Novel** : Better support for Windows environment (tested exhaustively)
-* **Novel** : Better integration to CI environment (e.g. [Travis-CI](https://github.com/roswell/roswell/wiki/4.1-Travis-CI), [CircleCI](https://github.com/roswell/roswell/wiki/4.2-Circle-CI), [Coveralls](https://github.com/roswell/roswell/wiki/4.3-Coverall))
+* **Novel** : Better integration to CI environment (e.g. [Travis-CI](https://github.com/roswell/roswell/wiki/Travis-CI), [CircleCI](https://github.com/roswell/roswell/wiki/Circle-CI), [Coveralls](https://github.com/roswell/roswell/wiki/Coveralls))
 
 ## Usage
 
@@ -91,6 +90,8 @@ Use "ros help [topic]" for more information about the topic.
 To use an implementation that was not installed by roswell, use i.e. `ros use sbcl/system`.
 
 The list of supported implementations continues to grow!
+
+By default roswell downloads the default stable lisp implementation (sbcl-bin). To use system implementation from the start run `ros lisp=sbcl-bin/system setup` before anything else.
 
 ### Installing scripts
 
@@ -166,7 +167,7 @@ SANO Masatoshi (snmsts@gmail.com)
 
 ## Special Thanks to
  * Eitaro Fukamachi (e.arrows@gmail.com) for naming this project.
- * Sunrin SHIMURA for [keens/cim](https://github.com/keens/cim) that motivate me to start this project.
+ * Sunrin SHIMURA for [sionescu/cim](https://github.com/sionescu/CIM) that motivate me to start this project.
 
 ## Project
  * https://github.com/roswell/roswell

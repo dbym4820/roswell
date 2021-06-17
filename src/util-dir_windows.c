@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #include "util.h"
 
 #ifdef HAVE_WINDOWS_H
@@ -42,6 +41,7 @@ int directory_exist_p (char* path) {
 
 
 int change_directory(const char* path) {
+  cond_printf(1,"change_directory:%s\n",path);
   return _chdir(path);
 }
 

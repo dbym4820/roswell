@@ -1,15 +1,8 @@
-#|
-
-This file is a stub.
-roswell does not function without help of C codes.
-
-|#
-
-(defsystem roswell
-  :version "17.10.10.83"
+(defsystem "roswell"
+  :version "21.5.14.109"
   :author "SANO Masatoshi"
   :license "MIT"
-  :depends-on (:simple-date-time :split-sequence :plump :zip)
+  :depends-on ("simple-date-time" "split-sequence" "plump" "zip")
   :components ((:module "lisp"
                 :components
                 ((:file "install-allegro" :depends-on ("util-install-quicklisp"))
@@ -33,16 +26,17 @@ roswell does not function without help of C codes.
                  (:file "util" :depends-on ("init"))
                  (:file "init"))))
   :description "a command line tool to install and manage Common Lisp implementations damn easily."
-  :long-description
-  #.(with-open-file (stream (merge-pathnames
-                             #p"README.md"
-                             (or *load-pathname* *compile-file-pathname*))
-                            :if-does-not-exist nil
-                            :direction :input)
-      (when stream
-        (let ((seq (make-array (file-length stream)
-                               :element-type 'character
-                               :fill-pointer t)))
-          (setf (fill-pointer seq) (read-sequence seq stream))
-          seq)))
-  :in-order-to ((test-op (test-op roswell-test))))
+  :long-description #.(uiop:read-file-string (merge-pathnames
+                                              #p"README.md" (or *load-pathname* *compile-file-pathname*)))
+  :in-order-to ((test-op (test-op :roswell/test))))
+
+(defsystem "roswell/test"
+  :depends-on (:prove)
+  :components ((:module "t"
+                        :components
+                        ((:file "ros"))))
+  :perform (test-op :after (op c)
+                    #+quickisp(ql:quickload :prove-asdf)
+                    #-asdf(asdf:load-system :prove-asdf)
+                    (uiop:symbol-call :prove-asdf :run-test-system c)
+                    (asdf:clear-system c)))

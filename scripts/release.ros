@@ -5,10 +5,10 @@ exec ros -Q -L sbcl-bin -- $0 "$@"
 |#
 (progn
   (ros:ensure-asdf)
-  (ql:quickload '(:cl-ppcre :split-sequence "snmsts/sn.github")))
+  (ql:quickload '("cl-ppcre" "split-sequence" "local-time") :silent t))
 
 (defpackage :ros.script.release.3703769340
-  (:use :cl :sn.github.repos.releases))
+  (:use :cl))
 (in-package :ros.script.release.3703769340)
 
 (defvar *project-path* (truename (merge-pathnames "../" (make-pathname :name nil :type nil :defaults *load-pathname*))))
@@ -31,7 +31,7 @@ exec ros -Q -L sbcl-bin -- $0 "$@"
     (setf (first version) (- (nth 5 d) 2000)
           (second version) (nth 4 d)
           (fourth version) (1+ (fourth version)))
-    (format nil "~{~A~^.~}" version)))
+    (format nil "~{~2,'0d~^.~}" version)))
 
 (defun edit-file (path match replace version &key test)
   (let ((file (with-open-file (in path :direction :input)
@@ -58,6 +58,12 @@ exec ros -Q -L sbcl-bin -- $0 "$@"
   (edit-file (merge-pathnames "roswell.asd" *project-path*)
              "^[ ]*:version[ ]*\"[^,]*\"[ ]*$"
              "^([ ]*:version[ ]*\")([^\"]*)(\".*)$"
+             (cl-ppcre:regex-replace-all "(\\.|^)0+([0-9])" version "\\{1}\\{2}") :test test))
+
+(defun edit-install-for-ci-sh (&optional (version *new-version*) test)
+  (edit-file (merge-pathnames "scripts/install-for-ci.sh" *project-path*)
+             "^ROSWELL_RELEASE_VERSION=(.*)"
+             "^(ROSWELL_RELEASE_VERSION=)(.*)()$"
              version :test test))
 
 (defun signature ()
@@ -73,35 +79,34 @@ exec ros -Q -L sbcl-bin -- $0 "$@"
              nil
              (local-time:universal-to-timestamp (get-universal-time))))))
 
-(defun edit-changelog ()
-  (let ((lines (with-open-file (in (merge-pathnames "ChangeLog" *project-path*))
-                 (loop for l = (read-line in nil nil)
-                       while l
-                       collect l))))
-    (with-open-file (out (merge-pathnames "ChangeLog" *project-path*)
-                         :direction :output :if-exists :supersede)
+(defun edit-changelog () 
+  (let* ((path (merge-pathnames "ChangeLog" *project-path*))
+         (lines (uiop:read-file-lines path))
+         done)
+    (with-open-file (out path :direction :output :if-exists :supersede)
       (loop for l in lines
-            with version = t
-            with date
-            with done
-            when (and version (cl-ppcre:scan *dummy-version* l))
-              do (setf version nil
-                       l (cl-ppcre:regex-replace
-                          *dummy-version* l *new-version*)
-                       date t)
-            when (and date (cl-ppcre:scan "^ --" l))
-              do (setf date nil
-                       l (signature)
-                       done t)
-            do (format out "~A~%" l)))))
+         with version = t
+         with date
+         do (cond ((and version (cl-ppcre:scan *dummy-version* l))
+                   (setf version nil
+                         l (cl-ppcre:regex-replace
+                            *dummy-version* l *new-version*)
+                         date t))
+                  ((and date (cl-ppcre:scan "^ --" l))
+                   (setf date nil
+                         l (signature)
+                         done t)))
+           (format out "~A~%" l)))
+    done))
 
-(defun prepare-changelog ()
-  (uiop:run-program "git checkout master" :output :interactive :error-output :interactive)
-  (let ((lines (with-open-file (in (merge-pathnames "ChangeLog" *project-path*))
-                 (loop for l = (read-line in nil nil)
-                       while l
-                       collect l)))
-        (*new-version* *dummy-version*))
+(defun ! (x)
+  (uiop:run-program x :output :interactive :error-output :interactive))
+
+(defun prepare-changelog (argv)
+  (declare (ignore argv))
+  (! "git checkout master")
+  (let* ((lines (uiop:read-file-lines (merge-pathnames "ChangeLog" *project-path*)))
+         (*new-version* *dummy-version*))
     (with-open-file (out (merge-pathnames "ChangeLog" *project-path*)
                          :direction :output :if-exists :supersede)
       (format out "~{~A~%~}~{~A~%~}"
@@ -127,74 +132,45 @@ exec ros -Q -L sbcl-bin -- $0 "$@"
     (setf *new-version* (inc-version (find-version))))
   (format t "~&new version name is ~S~%" *new-version*)
   (force-output)
-  (edit-changelog)
+  (unless (edit-changelog)
+    (format *error-output* "changelog isn't prepared~%Type make release-changelog before make prepare~%")
+    (ros:quit))
   (edit-configure-ac)
   (edit-roswell-asd)
+  (edit-install-for-ci-sh)
   (show-how-to-release))
 
 (defun release (argv)
   (declare (ignore argv))
-  (let ((version (find-version)))
-    (mapc
-     #'uiop:run-program
-     `("git add ChangeLog configure.ac roswell.asd"
-       ,(format nil "git commit -m \"bump version to ~A\"" version)))))
+  (!"git checkout master")
+  (!"git add ChangeLog configure.ac roswell.asd scripts/install-for-ci.sh")
+  (!(format nil "git commit -m \"bump version to ~A\"" (find-version))))
 
-(defun release-2 (argv)
+(defun release-push (argv)
   (declare (ignore argv))
+  ;; TBD check commit message to ensure just released.
+  (!"git checkout release")
+  (!"git merge master")
   (let ((version (find-version)))
-    (mapc
-     (lambda (x) (uiop:run-program x :output :interactive :error-output :interactive))
-     `("git checkout release"
-       "git merge --allow-unrelated-histories master"
-       ,(format nil "git tag -a \"v~A\" -m \"v~A\"" version version)
-       "git push"
-       "git push --tags"))
-    (prepare-changelog)
-    (mapc
-     (lambda (x) (uiop:run-program x :output :interactive :error-output :interactive))
-     `("git add ChangeLog"
-       ,(format nil "git commit -m \"[ci skip] prepare ChangeLog entry next to v~A\"" version)
-       "git push"))))
+    (! (format nil "git tag -a \"v~A\" -m \"v~A\""  version version)))
+  (!"git checkout master")
+  (format *error-output* "~{~A~%~}~%"
+          '("Type"
+            "git push origin release:release"
+            "git push --tags"
+            "git push origin master:master")))
 
-(defun release-exist-p (tagname &key (owner *owner*) (repo *repo*))
-  (ignore-errors
-    (find tagname
-          (releases-list owner repo)
-          :key (lambda (x) (getf x :|tag_name|))
-          :test 'equal)))
 
-(defun ensure-release-exists (tagname &key (owner *owner*) (repo *repo*))
-  (let ((found (release-exist-p tagname :owner owner :repo repo)))
-    (if found
-        found
-        (releases-create owner repo tagname))))
-
-(defun asset-upload (path tagname &key (owner *owner*) (repo *repo*))
-  (releases-asset-upload
-   owner repo
-   (getf (release-exist-p tagname :owner owner :repo repo) :|id|) path))
-
-(defun github (argv)
-  (unless (uiop:getenv "GITHUB_OAUTH_TOKEN")
-    (error "GITHUB_OAUTH_TOKEN must be set"))
-  (ensure-release-exists (uiop:getenv "TRAVIS_TAG"))
-  (asset-upload (pathname (first argv)) (uiop:getenv "TRAVIS_TAG")))
-
-(defun debian (argv)
-  (declare (ignore argv))
-  (unless (uiop:getenv "GITHUB_OAUTH_TOKEN")
-    (error "GITHUB_OAUTH_TOKEN must be set"))
-  (ensure-release-exists (uiop:getenv "TRAVIS_TAG"))
-  (loop for i in (directory (make-pathname
-                             :type :wild :name :wild
-                             :defaults (merge-pathnames "debian/debian/" *project-path*)))
-     when (pathname-name i)
-     do (asset-upload (pathname i) (uiop:getenv "TRAVIS_TAG"))))
+(defun changelog (argv)
+  "prepare changelog lines for newrelease"
+  (! "git checkout master")
+  (prepare-changelog argv)
+  (! "git add ChangeLog")
+  (! (format nil "git commit -m \"[ci skip] prepare ChangeLog entry next to v~A\"" (find-version))))
 
 (defun main (subcmd &rest argv)
   (declare (ignorable argv))
-  (let ((subcmd (find subcmd '(release prepare github debian release-2)
+  (let ((subcmd (find subcmd '(prepare release release-push changelog)
                       :test 'equal :key 'string-downcase)))
     (when subcmd
       (funcall subcmd argv))))

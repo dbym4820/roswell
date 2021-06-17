@@ -1,20 +1,23 @@
-/* -*- tab-width : 2 -*- */
 #include "util.h"
+#include "gend.h"
 
 #ifndef HAVE_WINDOWS_H
 
-char* uname(void) {
-  char *p,*p2;
-  p2=remove_char("\r\n",p=system_("uname"));
-  s(p);
+char* uname_s(void) {
+  char *p2=q(UNAME_S);
+  if(strcmp(p2,"SunOS")==0) {
+    s(p2);
+    return q("solaris");
+  }
   return downcase(p2);
 }
 
 char* uname_m(void) {
-  char *p=system_("uname -m");
-  char *p2;
-  p2=remove_char("\r\n",p);
-  s(p);
+  char *p2=q(UNAME_M);
+  if(strcmp(p2,"i86pc")==0) {
+    s(p2);
+    return q("x86-64");
+  }
   if(strcmp(p2,"i686")==0) {
     s(p2);
     return q("x86");
@@ -44,6 +47,10 @@ char* uname_m(void) {
       return q("armel");
     }
   }
+  if(strcmp(p2,"armv5tejl")==0) {
+    s(p2);
+    return q("armel");
+  }
   return substitute_char('-','_',p2);
 }
 
@@ -66,10 +73,22 @@ LVal directory(char* path) {
   if(dir==NULL)
     return 0;
   while((dirent=readdir(dir))!=0) {
-    char* str=q(dirent->d_name);
-    if(dirent->d_type & DT_DIR)
-      str=s_cat2(str,q("/"));
-    ret=conss(str,ret);
+    if(!(strcmp(dirent->d_name,".")==0 ||
+         strcmp(dirent->d_name,"..")==0)) {
+      char* str=q(dirent->d_name);
+#ifdef HAVE_STRUCT_DIRENT_D_TYPE
+      if(dirent->d_type & DT_DIR)
+#else
+      char* sub=s_cat2(q(path),q(str));
+      int r=directory_exist_p(sub);
+      s(sub);
+      if(r)
+#endif
+      {
+        str=s_cat2(str,q("/"));
+      }
+      ret=conss(str,ret);
+    }
   }
   closedir(dir);
   return ret;
@@ -116,6 +135,7 @@ void setup_uid(int euid_or_uid) {
            seteuid(uid)==0))
         cond_printf(0,"Error setegid/seteuid \n");
     }else {
+      setgroups(0, NULL);
       if(!(setgid(gid)==0 &&
            setuid(uid)==0))
         cond_printf(0,"Error setgid/setuid \n");

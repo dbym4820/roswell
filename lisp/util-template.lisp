@@ -1,7 +1,7 @@
 #+ros.init
 (roswell:include '("util" "system") "util-template")
 #+quicklisp
-(ql:quickload '(:uiop :djula) :silent t)
+(ql:quickload '("uiop" "djula") :silent t)
 (defpackage :roswell.util.template
   (:use :cl)
   (:export
@@ -14,10 +14,15 @@
 
    :templates-list
    :template-create
+   :template-remove
    :template-directory
+   :template-parameter
    :template-remove-file
    :template-add-file
    :template-attr-file
+   :template-attr-common
+   :template-export-files
+   :template-import-files
 
    :template-apply
 
@@ -64,7 +69,10 @@
            collect (code-char i)) 'string)))
 
 (defun templates-list (&key filter name)
-  (let* ((* (loop for x in (append *template-base-directories* (list (first ql:*local-project-directories*)))
+  (let* ((* (loop for x in (append *template-base-directories*
+                                   (mapcar (lambda (path)
+                                             (merge-pathnames "templates/" path))
+                                           roswell:*local-project-directories*))
                   append (directory (merge-pathnames "**/*.asd" x))))
          (* (remove-if-not (lambda (x) (ignore-errors (string-equal "roswell.init." (pathname-name x) :end2 13))) *))
          (* (cons (merge-pathnames "init-default.lisp" (ros:opt "lispdir")) *))
@@ -80,10 +88,9 @@
     (cond
       (name
        (mapcar (lambda (x)
-                 (subseq (pathname-name x)
-                         (1+ (position-if
-                              (lambda (x) (find x ".-"))
-                              (pathname-name x) :from-end t))))
+                 (cond
+                   ((equal (pathname-name x) "init-default") "default")
+                   (t (subseq (pathname-name x) 13))))
                *))
       (t *))))
 
@@ -92,7 +99,8 @@
     (if found
         (make-pathname :type nil :name nil
                        :defaults (first found))
-        (merge-pathnames (format nil "templates/~A/" (sanitize name)) (first ql:*local-project-directories*)))))
+        (merge-pathnames (format nil "templates/~A/" (sanitize name))
+                         (first roswell:*local-project-directories*)))))
 
 (defun template-file-path (template-name path)
   (merge-pathnames (enc-string path)
@@ -162,10 +170,10 @@
                   (asdf:load-system :roswell.util.template :verbose nil)
                   (funcall (read-from-string "roswell.util.template:template-apply") _ r *params*)))))))
 
-(defun template-read (name)
+(defun template-read-asd (asd-path)
   (let (package
         read/)
-    (with-open-file (o (template-asd-path name)
+    (with-open-file (o asd-path
                        :direction :input
                        :if-does-not-exist :error)
       (setq read/ (read o))
@@ -184,11 +192,24 @@
         (error "not init template ~S~%" (list read/)))
       (second (third read/)))))
 
+(defun template-read (name)
+  (template-read-asd (template-asd-path name)))
+
 (defun template-create (name)
   (template-write (sanitize name) nil))
 
+(defun template-remove (name)
+  (uiop:delete-directory-tree
+   (template-path name)
+   :validate (lambda (path)
+               (equal (car (last (pathname-directory path)))
+                      name))))
+
 (defun template-directory (name)
   (getf (template-read (sanitize name)) :files))
+
+(defun template-parameter (name)
+  (getf (template-read (sanitize name)) :common))
 
 #+ros.init
 (defun (setf template-default) (template-name)
@@ -203,8 +224,10 @@
         (info (template-read template-name)))
     (uiop:copy-file path-copy-from
                     (ensure-directories-exist (template-file-path template-name file-name)))
-    (unless (find file-name (getf info :files) :key (lambda (x) (getf x :name)))
-      (push (list :name file-name :method "copy") (getf info :files)))
+    (unless (find file-name (getf info :files) :key (lambda (x) (getf x :name)) :test 'equal)
+      (let ((method (getf (getf info :common) :default-method)))
+        (push (list :name file-name :method (if method method "copy"))
+              (getf info :files))))
     (template-write template-name info)))
 
 (defun template-remove-file (template-name file-name)
@@ -228,5 +251,45 @@
           (setf (getf found key ) value))
       (template-write template-name info))))
 
+(defun template-attr-common (template-name key value)
+  (let* ((template-name (sanitize template-name))
+         (info (template-read template-name)))
+    (setf (getf (getf info :common) key) value)
+    (template-write template-name info)))
+
 #+ros.init
 (roswell.util:system "util-template")
+
+(defun template-export-files (template-name dst)
+  (let ((path (first (templates-list :filter template-name))))
+    (when (and path (equal (pathname-type path) "asd"))
+      (mapc (lambda (x)
+              (let* ((file-name (getf x :name))
+                     (dst-file-path (merge-pathnames file-name dst)))
+                (ensure-directories-exist dst-file-path)
+                (uiop:copy-file (template-file-path template-name file-name)
+                                dst-file-path)))
+            (template-directory template-name))
+      (uiop:copy-file path
+                      (merge-pathnames (format nil "~A.asd" (pathname-name path)) dst)))))
+
+(defun template-import-files (src)
+  (let ((asd-path (first (directory (merge-pathnames "roswell.init.*.asd" src)))))
+    (unless asd-path
+      (error "\"roswell.init.*.asd\" is not exist"))
+    (let ((name (subseq (pathname-name asd-path) 13)))
+      (when (templates-list :filter name)
+        (template-remove name))
+      (template-create name)
+      (uiop:with-current-directory (src)
+        (mapc (lambda (x)
+                (let ((file-name (getf x :name))
+                      (chmod (getf x :chmod))
+                      (rewrite (getf x :rewrite)))
+                  (template-add-file name file-name file-name)
+                  (template-attr-file name file-name :method (getf x :method))
+                  (when rewrite
+                    (template-attr-file name file-name :rewrite rewrite))
+                  (when chmod
+                    (template-attr-file name file-name :chmod chmod))))
+              (reverse (getf (template-read-asd asd-path) :files)))))))

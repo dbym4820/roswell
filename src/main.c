@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #include "opt.h"
 
 char** argv_orig;
@@ -8,7 +7,7 @@ struct opts* local_opt=NULL;
 
 struct proc_opt top;
 
-#ifndef ROSWELL_HTML_TEST
+#ifndef ROSWELL_TSV_TEST
 int main(int argc,char **argv) {
   int i;
   char* path=s_cat(configdir(),q("config"),NULL);
@@ -28,7 +27,7 @@ int main(int argc,char **argv) {
   else
     for(arg=array_stringlist(argc-1,argv+1);arg;arg=dispatch(arg,&top));
   if(get_opt("program",0))
-    dispatch(stringlist("run","-q","--",NULL),&top);
+    dispatch(stringlist("run","--hook","--quit","--",NULL),&top);
   free_opts(global_opt);
 }
 #endif

@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #include "opt.h"
 
 #ifndef HAVE_WINDOWS_H
@@ -56,6 +55,7 @@ int directory_exist_p (char* path) {
 }
 
 int change_directory(const char* path) {
+  cond_printf(1,"change_directory:%s\n",path);
   return chdir(path);
 }
 
@@ -73,6 +73,7 @@ char* currentdir(void) {
 
 #else
 char* homedir(void);
+char* currentdir(void);
 #endif
 
 char* configdir(void) {
@@ -91,7 +92,7 @@ char* pathname_directory(char* path) {
   int i;
   char* ret;
   for(i=strlen(path)-1;i>=0&&path[i]!=SLASH[0];--i);
-  ret=append_trail_slash(i?subseq(path,0,i):path);
+  ret=(i>=0)?subseq(path,0,i+1):append_trail_slash(".");
   s(path);
   return ret;
 }

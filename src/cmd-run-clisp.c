@@ -1,10 +1,9 @@
-/* -*- tab-width : 2 -*- */
 #include "opt.h"
 
 char** cmd_run_clisp(int argc,char** argv,struct sub_command* cmd) {
   char* home=configdir();
   char* arch=uname_m();
-  char* os=uname();
+  char* os=uname_s();
   char* impl=(char*)cmd->name;
   char* version=(char*)cmd->short_name;
   /*[binpath for clisp] -q -q -M param -repl init.lisp
@@ -36,12 +35,22 @@ char** cmd_run_clisp(int argc,char** argv,struct sub_command* cmd) {
   if(help)
     ret=conss(q("--help"),ret);
 
+  {
+    char* path=cat(basedir(),impl_path,SLASH,"lib",SLASH,NULL);
+    LVal d=directory(path);
+    if(d) {
+      path=s_cat(path,q(firsts(d)),NULL);
+      cond_printf(1,"lisplibdir=%s\n",path);
+      ret=conss(q("-B"),ret);
+      ret=conss(path,ret);
+    }
+  }
   if(image) {
     char *path=cat(basedir(),impl_path,SLASH,"dump",SLASH,image,".core",NULL);
     if(file_exist_p(path)) {
       ret=conss(q("-M"),ret);
       ret=conss(path,ret);
-    } else {
+    }else {
       cond_printf(1,"core not found:%s\n",path);
       s(path);
     }
@@ -60,11 +69,9 @@ char** cmd_run_clisp(int argc,char** argv,struct sub_command* cmd) {
   ret=conss(q("CL-USER"),ret);
   if(!simple) {
     ret=conss(s_cat(s_escape_string(lispdir()),q("init.lisp"),NULL),ret);
-
-    if(program || script)
-      ret=conss(s_cat(q("(ros:run '("),q(program?program:""),
-                      script?cat("(:script ",script,")(:quit ())",NULL):q(""),
-                      q("))"),NULL),ret);
+    ret=conss(s_cat(q("(ros:run '("),q(program?program:""),
+                    script?cat("(:script ",script,")(:quit ())",NULL):q(""),
+                    q("))"),NULL),ret);
   }
   s(impl_path);
 

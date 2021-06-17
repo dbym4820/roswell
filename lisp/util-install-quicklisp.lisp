@@ -1,6 +1,6 @@
 (roswell:include '("util-install" "system") "util-install-quicklisp")
 (roswell:quicklisp :environment nil)
-(ql:quickload '(:uiop :simple-date-time :split-sequence :plump :cl-ppcre #+win32 :zip) :silent t)
+(ql:quickload '("uiop" "simple-date-time" "split-sequence" "plump" "cl-ppcre" #+win32 :zip) :silent t)
 (in-package :roswell.install)
 
 (defvar *build-hook* nil)
@@ -47,8 +47,13 @@
 ;;end here from util/opts.c
 
 (defun installedp (argv)
-  ;; TBD support library like msys2,externals-clasp
-  (and (probe-file (merge-pathnames (format nil "impls/~A/~A/~A/~A/" (uname-m) (uname) (getf argv :target) (opt "as")) (homedir))) t))
+  (let ((implpath  (merge-pathnames (format nil "impls/~A/~A/~A/~A/" (uname-m) (uname) (getf argv :target) (opt "as")) (homedir))))
+    (format t "Checking for installed implementation in ~A " implpath)
+    (if (uiop:directory-exists-p implpath)
+        (directory (merge-pathnames implpath "*")) ;if the provided path is a directory then check that it's not empty
+        (probe-file implpath)))) ;else check if the file exists
+;; TBD support library like msys2,externals-clasp
+;(let implefiledir )(merge-pathnames (format nil "impls/~A/~A/~A/~A/" (uname-m) (uname) (getf argv :target) (opt "as")) (homedir)))
 
 (defvar *version-func* nil)
 
@@ -63,7 +68,11 @@
     (setf *version-func* function)
     (let ((version (getf argv :version)))
       (when (or (null version) (equal version "latest"))
-        (setf (getf argv :version) (first (funcall *version-func*))
+        (setf (getf argv :version)
+              (let ((version (first (funcall *version-func*))))
+                (unless version
+                  (format t "Decide version failure ~A.~%" function))
+                version)
               (getf argv :version-not-specified) 0)))
     (cons t argv)))
 
@@ -200,12 +209,15 @@
 (system "install-abcl-bin")
 (system "install-allegro")
 (system "install-ccl-bin")
+(system "install-clasp-bin")
 (system "install-clasp")
 (system "install-clisp")
 (system "install-cmu-bin")
 (system "install-ecl")
+(system "install-mkcl")
 (system "install-sbcl-bin")
 (system "install-sbcl")
+(system "install-sbcl-source")
 (system "install+7zip"(:depends-on (:zip)))
 (system "install+ffcall")
 (system "install+msys2")

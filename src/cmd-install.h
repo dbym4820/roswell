@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #ifndef __INSTALL_H__
 #define __INSTALL_H__
 
@@ -7,6 +6,7 @@ struct install_options {
   char* version;
   char* os;
   char* arch;
+  char* variant;
   int arch_in_archive_name;
   int version_not_specified;
   void* opt;

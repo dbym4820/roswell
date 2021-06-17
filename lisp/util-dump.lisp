@@ -1,9 +1,9 @@
 #+ros.init
-(roswell:include "util" "util-dump")
+(roswell:include '("util" "util-config") "util-dump")
 (defpackage :roswell.util.dump
   (:use :cl :roswell.util)
-  (:export :*compression* :dump-compression :*predump* :*purify* :*impurify* :remove-docstrings
-   :*package-blacklist* :*additional-blacklist-for-destroy-packages*
+  (:export :*compression* :dump-compression :*predump* :*purify* :*impurify* :*bundle-shared*
+   :remove-docstrings :*package-blacklist* :*additional-blacklist-for-destroy-packages*
    :makunbound-symbols-and-delete-package :delete-all-packages
    :delete-macro-definitions :delete-compiler-macro-definitions
    :preprocess-before-dump :dump-dir))
@@ -17,6 +17,7 @@
 (defvar *predump* nil "list of functions to be performed before dumping")
 (defvar *purify* t "Whether running a purifying GC (moves objects to non-GC'd static space) before dump")
 (defvar *impurify* t "CCL only. Impurify all static space objects to dynamic space. Precedes the purifying GC.")
+(defvar *bundle-shared* nil "bundle shared object to binary path")
 
 (defvar *package-blacklist* `("KEYWORD" "ROSWELL" "ROS.SCRIPT.DUMP" "ROSWELL.UTIL.DUMP"
                                         ;; add impl-specific customization
@@ -32,13 +33,33 @@ These are appended to the blacklist before destroying the package system.
 Notably, it must include all nicknames.")
 
 (defun dump-dir (&optional env)
-  (merge-pathnames (format nil "~Aimpls/~A/~A/~A/dump/"
-                           (let ((env (or env (opt "roswellenv"))))
+  (let ((env (or env (opt "*roswellenv"))))
+    (setf env (if (equal env "-") nil
+                  env))
+    (merge-pathnames (format nil "~Aimpls/~A/~A/~A/dump/"
                              (if env
                                  (format nil "env/~A/" env)
-                                 ""))
-                           (uname-m) (uname) (opt "impl"))
-                   (homedir)))
+                                 "")
+                             (uname-m) (uname)
+                             (or (when env
+                                   (let* ((conf
+                                            (roswell.util.config:load-config
+                                             (merge-pathnames (format nil "env/~A/config" env)
+                                                              (homedir))))
+                                          (lisp (third (assoc "default.lisp" conf :test 'equal)))
+                                          (version (third (assoc (format nil "~a.version" lisp)
+                                                                 conf :test 'equal))))
+                                     (and lisp version
+                                          (format nil "~A/~A" lisp version))))
+                                 (when (opt "*lisp")
+                                   (let ((lisp (opt "*lisp")))
+                                     (if (find #\/ lisp)
+                                         lisp
+                                         (let ((version (opt  (format nil "~a.version" lisp))))
+                                           (and version
+                                                (format nil "~A/~A" lisp version))))))
+                                 (opt "impl")))
+                     (homedir))))
 
 (defun dump-compression (param)
   (setf *compression* param))

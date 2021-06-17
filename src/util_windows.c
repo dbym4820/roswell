@@ -1,4 +1,3 @@
-/* -*- tab-width : 2 -*- */
 #include "util.h"
 
 #ifdef HAVE_WINDOWS_H
@@ -14,11 +13,16 @@ int unsetenv(const char* name) {
   s(s_);
 }
 
-char* uname(void) {
+char* uname_s(void) {
   return q("windows");
 }
 
 char* uname_m(void) {
+  char* carch=getenv("MSYSTEM_CARCH");
+  if(carch && strcmp(carch,"x86_64")==0)
+    return q("x86-64");
+  if(carch && strcmp(carch,"i686")==0)
+    return q("x86");
   char* msystem=getenv("MSYSTEM");
   if(msystem && strcmp(msystem,"MINGW64")==0)
     return q("x86-64");

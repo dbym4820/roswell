@@ -11,17 +11,26 @@ exec ros -Q -m roswell -N roswell -- $0 "$@"
   (:use :cl :roswell.util))
 (in-package :ros.script.git.3702458293)
 
+(defun location (key)
+  (let ((found (or (cdr (assoc key `(("sbcl" . ,(merge-pathnames "src/sbcl-git/" (homedir)))
+                                     ("npt" . ,(merge-pathnames "src/npt-git/" (homedir)))
+                                     ("sly" . ,(merge-pathnames "lisp/sly/git/" (homedir))))
+                               :test 'equal))
+                   (ql:where-is-system key))))
+    (when found
+      (make-pathname
+       :type nil :name nil
+       :defaults found))))
+
 (defun main (&rest argv)
   (let* ((name (pathname-name *load-pathname*)))
     (roswell:exec
      (cond
        ((equal (first argv) "clone")
-        (uiop:chdir (first ql:*local-project-directories*))
+        (uiop:chdir (first roswell:*local-project-directories*))
         `(,name ,@argv))
-       ((ql:where-is-system (first argv))
-        (let* ((path (make-pathname
-                      :type nil :name nil
-                      :defaults (ql:where-is-system (first argv)))))
+       ((location (first argv))
+        (let* ((path (location (first argv))))
           (if (ignore-errors (uiop:chdir path))
               `(,name ,@(rest argv))
               (progn

@@ -1,12 +1,13 @@
 (roswell:include () "util")
 (defpackage :roswell.util
   (:use :cl)
-  (:import-from :ros :opt :ensure-asdf)
+  (:import-from :ros :opt :ensure-asdf :*local-project-directories*)
   (:export
    :uname :uname-m :homedir :config :impl :which :config-env :checkoutdir
-   :parse-version-spec :download :expand :sh :chdir :system :module
+   :parse-version-spec :head :download :expand :sh :chdir :system :module
    :core-extention :clone-github :opt :read-call :set-opt :copy-dir
-   :roswell-installable-searcher :setenv :unsetenv :ensure-asdf :split-sequence))
+   :roswell-installable-searcher :setenv :unsetenv :ensure-asdf :split-sequence
+   :local-project-build-hash))
 (in-package :roswell.util)
 
 (defun split-sequence (del seq &key end start (test #'eql) &allow-other-keys)
@@ -29,6 +30,8 @@
   #+cmucl(let ((f (ignore-errors (symbol-function (read-from-string "unix:unix-setenv")))))
            (when f (funcall f name value 1)))
   #+ecl(ext:setenv name value)
+  #+lispworks (hcl:setenv name name value)
+  #+mkcl(mkcl:setenv name value)
   value)
 
 (defun unsetenv (name)
@@ -38,6 +41,8 @@
   #+clisp(system::setenv name nil)
   #+cmucl(let ((f (ignore-errors (symbol-function (read-from-string "unix:unix-unsetenv")))))
            (when f (funcall f name)))
+  #+lispworks(hcl:setenv name nil)
+  #+mkcl(mkcl:setenv name nil)
   nil)
 
 (defun read-call (func &rest params)
@@ -61,14 +66,14 @@ Returns NIL when the package in the symbol prefix is not available."
 
 (defun module (prefix name)
   "Load external system"
-  (and (loop for c across "./\\"
+  (and (loop for c across "/\\"
              never (find c name))
        (let ((imp (format nil "roswell.~A.~A" prefix name)))
          (or #1=(ignore-errors
                  (let (*read-eval*)
                    (read-from-string (format nil "~A::~A" imp name))))
              (progn
-               (read-call "ql:register-local-projects")
+               (read-call "local-project-build-hash" :rebuild t)
                (or
                 (and (or (read-call "ql-dist:find-system" imp)
                          (read-call "ql:where-is-system" imp))
@@ -92,7 +97,7 @@ Returns NIL when the package in the symbol prefix is not available."
 
 (defun homedir ()
   "Returns the user-level installation directory of roswell. Example: /home/user/.roswell"
-  (or (probe-file (merge-pathnames ".roswell/" *default-pathname-defaults*))
+  (or (ignore-errors (probe-file (merge-pathnames ".roswell/" *default-pathname-defaults*)))
       (opt "homedir")))
 
 (defun impl (imp)
@@ -123,6 +128,15 @@ Example:
     unless c collect i into r
     finally (return (coerce r 'string))))
 
+(defun head (uri &key proxy (verbose nil) (output :interactive))
+  (declare (ignorable proxy))
+  (values
+   (ignore-errors
+     (roswell:roswell `("roswell-internal-use" "head" ,(backslash-encode uri)
+                        ,@(when verbose (list verbose)))
+                      output nil)
+     t)))
+
 (defun download (uri file &key proxy (verbose nil) (output :interactive))
   "Interface to curl4 in the roswell C binary"
   (declare (ignorable proxy))
@@ -132,7 +146,8 @@ Example:
                    output nil))
 
 (defun expand (archive dest &key verbose)
-  "Interface to the roswell C binary"
+  "extract archive via roswell. gz/bz/7z should be supported."
+  (ensure-directories-exist dest)
   #+win32
   (progn
     (roswell:include "install+7zip")
@@ -179,7 +194,11 @@ Example:
       "sh"))
 
 (defvar *version*
-  `(:roswell ,(roswell:version)
+  `(:roswell ,(or (ignore-errors (roswell:version))
+                  (progn
+                    (pushnew :ros.without-bin *features*)
+                    (read-call "asdf:component-version"
+                               (read-call "asdf:find-system" :roswell))))
     :lisp ,(lisp-implementation-type)
     :version ,(lisp-implementation-version))
   "Stores the version information for roswell binary and the current implementation.")
@@ -201,40 +220,57 @@ ccl-bin      -> (\"ccl-bin\" nil)
             `(,string nil)))))
 
 (defun checkoutdir ()
-  "Returns the parent directory of the first local project directory in ql:*local-project-directories*."
+  "Returns the parent directory of the first local project directory in *local-project-directories*."
   ;; see roswell:quicklisp for why.
   (roswell:quicklisp)
-  (let* ((* (read-from-string "ql:*local-project-directories*"))
-         (* (first (symbol-value *)))
+  (let* ((* (first *local-project-directories*))
          (* (merge-pathnames "../" *)))
     (truename *)))
 
 (defun clone-github (owner name &key
                                 (alias (format nil "~A/~A" owner name))
-                                branch force-git
+                                branch force-git (git t)
+                                force-update
                                 (path "templates")
                                 (home (checkoutdir)))
-  (format *error-output* "install from github ~A/~A~%" owner name)
-  (if (or force-git (which "git"))
-      (let ((dir (merge-pathnames (format nil "~A/~A/" path alias) home)))
+  (format *error-output* "Installing from github ~A~%" alias)
+  (if (or force-git
+          (and git
+               (which "git")))
+      (let ((dir (merge-pathnames (format nil "~A/~A/" path alias) home))
+            (recursive (opt "follow-dependency")))
         (setq branch (if branch (format nil "-b ~A" branch) ""))
         (if (funcall (intern (string :probe-file*) :uiop) dir)
             ()
             (funcall (intern (string :run-program) :uiop)
-                     (format nil "git clone ~A https://github.com/~A/~A.git ~A"
+                     (format nil "git clone ~A ~A https://github.com/~A/~A.git ~A"
+                             (if recursive "--recursive" "")
                              branch
                              owner name
                              (namestring (ensure-directories-exist dir))))))
       (let* ((path/ (merge-pathnames (format nil "~A/~A.tgz" path alias) home))
-             (dir (merge-pathnames ".expand/" (make-pathname :defaults path/ :name nil :type nil))))
-        (funcall (intern (string :delete-directory-tree) :uiop) dir :if-does-not-exist :ignore :validate t)
+             (dir (merge-pathnames ".expand/" (make-pathname :defaults path/ :name nil :type nil)))
+             (dest (merge-pathnames (format nil "~A/~A/" path alias) home))
+             (dtree (intern (string :delete-directory-tree) :uiop))
+             clean-dest)
+        (when (probe-file dest)
+          (format *error-output* "~S is already exist.~%" dest)
+          (cond
+            (force-update
+             (format *error-output* "Delete ~S and force update.~%" dest)
+             (setf clean-dest t))
+            (t
+             (format *error-output* "Stop cloning because no git client.~%")
+             (return-from clone-github t))))
+        (funcall dtree dir :if-does-not-exist :ignore :validate t)
         (setq branch (or branch "master"))
-        (download (format nil "https://github.com/~A/archive/~A.tar.gz" alias branch) path/)
+        (download (format nil "https://github.com/~A/~A/archive/~A.tar.gz" owner name branch) path/)
         (expand path/ (ensure-directories-exist dir))
-        (rename-file (first (directory (merge-pathnames "*/" dir)))
-                     (merge-pathnames (format nil "~A/~A/" path alias) home))
+        (when clean-dest
+          (funcall dtree dest :validate t))
+        (rename-file (first (directory (merge-pathnames "*/" dir))) dest)
         (delete-file path/)
-        (funcall (intern (string :delete-directory-tree) :uiop) dir :if-does-not-exist :ignore :validate t)
+        (funcall dtree dir :if-does-not-exist :ignore :validate t)
         t)))
 
 (defun config-env ()

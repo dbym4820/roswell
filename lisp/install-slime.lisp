@@ -1,10 +1,9 @@
 (roswell:include '("util-install-quicklisp"))
 (roswell:quicklisp :environment nil)
-(unless (find-package :plump)
-  (ql:quickload '(:plump) :silent t))
 
 (defpackage :roswell.install.slime
-  (:use :cl :roswell.install :roswell.locations :roswell.util))
+  (:use :cl :roswell.install :roswell.locations :roswell.util)
+  (:export :slime-write-helper))
 (in-package :roswell.install.slime)
 
 (defun slime-help (argv)
@@ -14,17 +13,17 @@
 
 (defun slime-get-version ()
   (format *error-output* "Checking version to install....~%")
-  (github-version (slime-git-version-uri) "slime" (lambda (href) (subseq href (+ 2 (position #\/ href :from-end t))))))
+  (cddr (github-version (slime-git-version-uri) "slime" (lambda (href) (subseq href (+ 2 (position #\/ href :from-end t)))))))
 
 (defun name-error (name)
   (format *error-output* "~A is not appropriate format. ~% quicklisp dist for XXXX.XX.XX , slime version for X.XX.~%" name)
   (roswell:quit 1))
 
 (defun slime-from-git (name)
-  (let* ((str (slime-uri))
-         (end (position #\/ str :from-end t))
-         (end2 (position #\. str :from-end t))
-         (start (position #\/ str :from-end t :end end)))
+  (let* ((str (slime-git-version-uri))
+         (end2 (position #\/ str :from-end t))
+         (end (position #\/ str :from-end t :end end2))
+         (start (position #\/ str :from-end t :end  end)))
     (clone-github
      (subseq str (1+ start) end)
      (subseq str (1+ end) end2)
@@ -63,6 +62,7 @@
                 do (download (second list) archive-file)))
       (uiop/filesystem:delete-directory-tree (ensure-directories-exist extract-path) :validate t)
       (expand archive-file (ensure-directories-exist extract-path))
+      (uiop/filesystem:delete-directory-tree (merge-pathnames (format nil "lisp/slime/~A/" name) (homedir)) :validate t :if-does-not-exist :ignore)
       (prog1
           (ql-impl-util:rename-directory
            (first (directory (make-pathname :defaults extract-path :name :wild :type :wild)))
@@ -83,7 +83,10 @@
     (format *error-output* "~{~A~%~}"
             `(,(format nil "helper.el installed in ~S" (namestring target)) ""
               "To use, add this to your ~/.emacs:" ""
-              ,(format nil "  (load (expand-file-name ~S))" enough)))))
+              ,(format nil
+                       "  (load (expand-file-name ~S))"
+                       #-win32 enough
+                       #+win32 (namestring target))))))
 
 (defun slime-install (argv)
   (let ((name (or (getf argv :version) (substitute #\. #\- (ql:dist-version "quicklisp")))))
@@ -98,6 +101,7 @@
           (slime-from-ql name)))
       (t (name-error name)))
     (setf (config "slime.version") name)
+    (setf (config "emacs.type") "slime")
     (slime-write-helper))
   (cons t argv))
 

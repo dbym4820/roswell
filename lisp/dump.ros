@@ -8,7 +8,7 @@ exec ros -- $0 "$@"
   (roswell:include "util-dump")
   (unless (find-package :uiop)
     #-quicklisp(require :uiop)
-    #+quicklisp(ql:quickload :uiop :silent t)))
+    #+quicklisp(ql:quickload "uiop" :silent t)))
 
 (defpackage :ros.script.dump
   (:use :cl :roswell.util :roswell.util.dump))
@@ -34,7 +34,9 @@ exec ros -- $0 "$@"
       ((and (equal (first params) "-o"))
        (format *error-output* "Missing the pathname for an image.~%"))
       (t (let ((path (merge-pathnames (format nil "~A.~A" (first params) (core-extention))
-                                      (dump-dir (and (equal (first params) "roswell") "roswell")))))
+                                      (dump-dir (if (equal (first params) "roswell")
+                                                    "roswell"
+                                                    (opt "roswellenv"))))))
            (%dump (ensure-directories-exist path) :normal))))))
 
 (defun executable (func params)
@@ -101,6 +103,8 @@ exec ros -- $0 "$@"
            (parse-options (cddr args) `(delete-all-packages ,@q (pushnew ,(string-upcase (second args)) *package-blacklist* :test #'string=))))
           ((equal car "--destroy-packages-sbcl")
            (parse-options (rest args) `(#+sbcl ,(read-from-string "roswell.dump.sbcl:destroy-packages-sbcl") ,@q)))
+          ((equal car "--bundle-shared-object")
+           (parse-options (rest args) (cons `(set *bundle-shared* t) q)))
           ((equal car "--purify")
            (parse-options (rest args) (cons `(set *purify* t) q)))
           ((equal car "--impurify")
@@ -132,7 +136,10 @@ exec ros -- $0 "$@"
                 (subcmd (find mode (funcall module :query *subcmds*)
                               :test 'equal
                               :key 'string-downcase))
-                (args (rest args)))
+                (args (rest args))
+                (*features* (cons (let (*read-eval*)
+                                    (read-from-string (format nil ":roswell.dump.~A" mode)))
+                                  *features*)))
            (if subcmd
                (funcall subcmd module args)
                (format *error-output* "'~A' is not a valid command for '~A' subcommand for ~A ~%"

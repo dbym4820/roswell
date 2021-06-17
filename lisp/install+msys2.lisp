@@ -10,8 +10,8 @@
 (defvar *msys2-bits*)
 
 (defun msys2-get-version ()
-  '("20150916"))
-;;sha1 "88fa66ac2a18715a542e0768b1af9b2f6e3680b2"
+  '("20180531"))
+;;sha1 "309f604a165179d50fbe4131cf87bd160769f974"
 ;;(ironclad:byte-array-to-hex-string (ironclad:digest-file :sha1 path))
 
 (defun msys2-setup (argv)
@@ -53,17 +53,25 @@
           (uiop/run-program:run-program
            `(,(uiop:native-namestring (merge-pathnames "usr/bin/bash" msys))
              "-lc" " ")
-           :output t)
+           :output t
+           :error-output t)
+
+          (dotimes (i 3)
+            (uiop/run-program:run-program
+             `(,(uiop:native-namestring (merge-pathnames "usr/bin/bash" msys))
+               "-lc"
+               ,(format nil "~@{~A~}"
+                        "pacman --noconfirm "
+                        "-Suy autoconf automake pkg-config "
+                        "mingw-w64-" *msys2-arch* "-gcc "
+                        "make zlib-devel"))
+             :output t
+             :error-output t))
+          
           (uiop/run-program:run-program
-           `(,(uiop:native-namestring (merge-pathnames "usr/bin/bash" msys))
-             "-lc"
-             ,(format nil "~@{~A~}"
-                      "for i in {1..3}; do pacman --noconfirm "
-                      "-Suy autoconf automake pkg-config "
-                      "mingw-w64-" *msys2-arch* "-gcc "
-                      "make zlib-devel && break || sleep 15; done")))
-          (uiop/run-program:run-program
-           `(,(uiop:native-namestring (merge-pathnames "autorebase.bat" msys))))
+           `(,(uiop:native-namestring (merge-pathnames "autorebase.bat" msys)))
+           :output t
+           :error-output t)
           (setf (config "msys2.version") (getf argv :version)))))
   (cons t argv))
 

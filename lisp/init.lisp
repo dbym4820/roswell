@@ -27,16 +27,19 @@ have the latest asdf, and this file has a workaround for this.
   (:nicknames :ros)
   (:shadow :load :eval :package :restart :print :write)
   (:export :run :*argv* :*main* :*load* :*cmd* :quit :script :quicklisp :getenv :opt
-           :ignore-shebang :asdf :include :ensure-asdf
-           :roswell :exec :setenv :unsetenv :version :swank :verbose)
+           :ignore-shebang :asdf :include :ensure-asdf :revert-extension
+           :roswell :exec :setenv :unsetenv :version :swank :verbose
+           :*local-project-directories*)
   (:documentation "Roswell backend."))
 
 (in-package :roswell)
+(defvar *latest-system* nil)
 (defparameter *argv* nil)
 (defparameter *ros-opts* nil)
 (defparameter *main* nil)
 (defvar *cmd* nil)
 (defparameter *load* `((identity . cl:load)))
+(defvar *local-project-directories* nil)
 
 ;; small tools
 (defun getenv (x)
@@ -50,9 +53,11 @@ have the latest asdf, and this file has a workaround for this.
         (funcall f x)
         (cdr (assoc x ext:*environment-list* :test #'string=))))
   #+ecl(ext:getenv x)
+  #+mkcl(mkcl:getenv x)
   #+sbcl(sb-posix:getenv x)
   #+allegro(sys:getenv x)
-  #-(or abcl ecl ccl clisp sbcl cmucl allegro clasp)
+  #+lispworks(hcl:getenv x)
+  #-(or abcl ecl ccl clisp sbcl cmucl allegro clasp lispworks mkcl)
   (when (find :asdf *features*)
     (funcall (read-from-string "asdf::getenv") x)))
 
@@ -66,26 +71,32 @@ have the latest asdf, and this file has a workaround for this.
                (or (read-from-string (getenv "ROS_OPTS"))
                    '()))))))
 
-(defun opt (param)
-  (second (assoc param (ros-opts) :test 'equal)))
+(defun opt (param &key from-end reload)
+  (when reload
+    (setf *ros-opts* nil))
+  (second (assoc param
+                 (funcall (if from-end #'reverse #'identity)
+                          (ros-opts))
+                 :test 'equal)))
 
 (defun verbose ()
-  (let ((ret (parse-integer (opt "verbose"))))
-    (if (zerop ret)
-        nil ret)))
+  (and (opt "verbose")
+       (let ((ret (parse-integer (opt "verbose"))))
+         (if (zerop ret)
+             nil ret))))
 
 (let (sentinel)
-  (defun ensure-asdf ()
+  (defun ensure-asdf (&key (version (opt "asdf.version")))
     (let ((*error-output* (if (verbose)
                               *error-output*
                               (make-broadcast-stream))))
       (setf sentinel
             (or sentinel
-                (when (and (opt "asdf")
+                (when (and version
                            (and (find :asdf *features*)
-                                (not (or (equal (opt "asdf")
+                                (not (or (equal version
                                                 (funcall (read-from-string "asdf:asdf-version")))
-                                         (= (length (opt "asdf")) 40)))))
+                                         (= (length version) 40)))))
                   (funcall 'asdf :no-download t))
                 (find :asdf *features*)
                 (ignore-errors (require "asdf")))
@@ -122,7 +133,9 @@ have the latest asdf, and this file has a workaround for this.
     #+clasp (core:quit ret)
     #+clisp (ext:exit ret)
     #+ccl (ccl:quit ret)
+    #+mkcl (mkcl:quit :exit-code ret)
     #+cmucl (progn (finish-output) (finish-output *error-output*) (unix:unix-exit ret))
+    #+lispworks (lw:quit :status ret)
     (ignore-errors
      (progn (ensure-asdf)
             (funcall (read-from-string "asdf::quit") ret)))
@@ -154,46 +167,66 @@ have the latest asdf, and this file has a workaround for this.
    (ccl:with-string-vector (argv args) (ccl::%execvp argv)))
   (quit (run-program args :output :interactive)))
 
-(defun quicklisp (&key path (environment "QUICKLISP_HOME"))
-  (unless (find :quicklisp *features*)
-    (let ((path (make-pathname
-                 :name "setup"
-                 :type "lisp"
-                 :defaults (or path
-                               (let ((script (read-from-string
-                                              (format nil "(~A)" (opt "script")))))
-                                 (when (and (first script)
-                                            (equal (file-namestring (first script)) "dump.ros")
-                                            (equal (second script) "output")
-                                            (equal (third script) "-f")
-                                            (equal (fourth script) "roswell"))
-                                   (merge-pathnames "lisp/quicklisp/"
-                                                    (opt "homedir"))))
-                               (and environment (getenv environment))
-                               (opt "quicklisp"))))
-          (local (ignore-errors
-                  (truename
-                   (merge-pathnames
-                    ".roswell/local-projects/"
-                    *default-pathname-defaults*)))))
-      (when (probe-file path)
-        (cl:load path :verbose (verbose))
-        (loop with symbol = (read-from-string "ql:*local-project-directories*")
-           for path in `(,local
-                         ,(ignore-errors
-                           (truename (merge-pathnames "../../../local-projects/" (first (symbol-value symbol)))))
-                         ,(merge-pathnames "local-projects/" (opt "homedir")))
-           for probe = (and path (or (ignore-errors (probe-file path))
-                                     #+clisp(ext:probe-directory path)))
-           when probe
-           do (set symbol (cons path (symbol-value symbol)))
-           until probe)
-        t))))
+(defun quicklisp (&key path (environment "QUICKLISP_HOME")
+                  &aux (is-quicklisp-already-available
+                        (find :quicklisp *features*)))
+  "Corresponds to -Q command. Finds and loads setup.lisp for quicklisp, and adds appropriate local-project paths."
+
+  (cond
+    (is-quicklisp-already-available
+     (unless (equal (opt "quicklisp")
+                    (namestring (symbol-value (read-from-string "ql:*quicklisp-home*"))))
+       (setf *local-project-directories*
+             (copy-list
+              (symbol-value (read-from-string "ql:*local-project-directories*")))))
+     ;; In this case we have to return nil
+     (values nil))
+    (t ;; If quicklisp is not loaded yet:
+     (let ((path (make-pathname
+                  :name "setup"
+                  :type "lisp"
+                  :defaults (or path
+                                (and environment (getenv environment))
+                                (opt "quicklisp"))))
+           (local (ignore-errors
+                   (truename
+                    (merge-pathnames
+                     ".roswell/local-projects/"
+                     *default-pathname-defaults*)))))
+       (when (probe-file path)
+         (cl:load path :verbose (verbose))
+         (unless (getenv environment)
+           (loop
+             ;; *local-project-directories* defaults to a list of a single pathname,
+             ;; which is <directory containing setup.lisp>/local-projects/ .
+             for path in `(;; Searches local-project/ in the current directory
+                           ,local
+                           ;; Searches relative path from env path
+                           ,(ignore-errors
+                             (truename
+                              (merge-pathnames
+                               "../../../local-projects/"
+                               (first (symbol-value (read-from-string "ql:*local-project-directories*"))))))
+                           ;; Searches local-project/ in e.g. ~/.roswell/
+                           ,(ensure-directories-exist (merge-pathnames "local-projects/" (opt "homedir"))))
+             for probe = (and path (or (ignore-errors (probe-file path))
+                                       #+clisp(ext:probe-directory path)))
+             when probe
+               do (push path *local-project-directories*)
+             until probe))
+         t)))))
 
 (defvar *included-names* '("init"))
-(defparameter *include-path* *load-pathname*)
+(defparameter *include-path* (or #.*compile-file-pathname* *load-pathname*))
 
 (defun include (names &optional provide)
+  "CL:LOAD the files in the same directory as this init.lisp.
+The same file never loaded twice.
+NAMES is a list of lisp file name strings without extension.
+PROVIDE is a string used for grouping/naming a set of included files.
+PROVIDE is just a marker and does not correspond to a file.
+As a hacky side effect, files with the same name as PROVIDE is not loaded.
+"
   (loop
     for name in `(,provide
                   ,@(if (listp names)
@@ -202,24 +235,11 @@ have the latest asdf, and this file has a workaround for this.
     for path = (make-pathname
                 :defaults *include-path*
                 :name name :type "lisp")
-    unless (or (not name)
-               (member name *included-names* :test 'string=))
-    do (push name *included-names*)
-       (and (probe-file path)
-            (not (equal provide name))
-            (funcall 'load path))))
-
-(defmacro deplicated-fun (name lambda-list include read date)
-  `(defun ,name ,lambda-list
-     (format *error-output*
-             ,(let ((*package* (find-package :keyword)))
-                (format nil "deplicated function '~S'.~%Use '~A' instead to support Roswell after ~A"
-                        name read date)))
-     (include ,include)
-     (funcall (read-from-string ,read) ,@lambda-list)))
-
-(deplicated-fun setenv (name value) "util" "ROSWELL.UTIL:SETENV" "2017/08")
-(deplicated-fun unsetenv (name) "util" "ROSWELL.UTIL:UNSETENV" "2017/08")
+    do (when (and name (not (member name *included-names* :test 'string=)))
+         (push name *included-names*)
+         (when (and (probe-file path)
+                    (not (equal provide name)))
+           (funcall 'load path)))))
 
 (defun swank (&rest params)
   (include "util-swank")
@@ -231,7 +251,6 @@ have the latest asdf, and this file has a workaround for this.
         until (or (not x) (eq x #\newline)))
   (values))
 
-(compile 'shebang-reader)
 (defun ignore-shebang ()
   (set-dispatch-macro-character #\# #\! #'shebang-reader))
 
@@ -249,7 +268,7 @@ have the latest asdf, and this file has a workaround for this.
 (defun asdf (&key no-download)
   (setf *downloaded-asdf-loaded*
         (or *downloaded-asdf-loaded*
-            (let* ((version-installed (opt "asdf.version"))
+            (let* ((version-installed (opt "asdf.version" :reload t))
                    (version (or version-installed
                                 (unless no-download
                                   (roswell '("install" "asdf"))
@@ -257,6 +276,12 @@ have the latest asdf, and this file has a workaround for this.
                    (path (merge-pathnames (format nil "lisp/asdf/~A/asdf.lisp" version) (opt "homedir"))))
               (when (equal version "NIL")
                 (error "asdf download error?"))
+              (let ((fasl (make-pathname :defaults path :type (substitute #\- #\/ (substitute #\_ #\. (opt "impl"))))))
+                (when (verbose)
+                  (format *error-output* "asdf fasl:~A~%" fasl))
+                (unless (probe-file fasl)
+                  (roswell `(,@(when (verbose) '("-v")) "-L" ,(opt "impl") "compile-file" "-asdf" ,version) :string t))
+                (setf path (or (probe-file fasl) path)))
               (when (probe-file path)
                 (ignore-errors
                  (locally
@@ -267,6 +292,8 @@ have the latest asdf, and this file has a workaround for this.
 
 (let ((symbol (ignore-errors (read-from-string "asdf::*user-cache*")))
       (impl (substitute #\- #\/ (opt "impl"))))
+  (when (opt "asdf.version")
+    (setq impl (format nil "~A-~A" impl (opt "asdf.version"))))
   (when (and symbol (boundp symbol))
     (cond ((listp (symbol-value symbol))
            (set symbol (append (symbol-value symbol) (list impl))))
@@ -283,9 +310,12 @@ have the latest asdf, and this file has a workaround for this.
 
 #+sbcl
 (when (ignore-errors (string-equal (opt "impl") "sbcl-bin" :end1 8))
-  (let ((path (merge-pathnames (format nil "src/sbcl-~A/" (lisp-implementation-version)) (opt "homedir"))))
-    (when (probe-file path)
-      (sb-ext:set-sbcl-source-location path))))
+  (flet ((source (version)
+           (let ((path (merge-pathnames (format nil "src/sbcl-~A/" version) (opt "homedir"))))
+             (when (probe-file path)
+               (sb-ext:set-sbcl-source-location path)))))
+    (or (source (lisp-implementation-version))
+        (source "git"))))
 
 (defun source-registry (arg &rest rest)
   (declare (ignorable rest))
@@ -309,7 +339,8 @@ have the latest asdf, and this file has a workaround for this.
   (loop for ar = args then (subseq ar (1+ p))
         for p = (position #\, ar)
         for arg = (if p (subseq ar 0 p) ar)
-        do (if (find :quicklisp *features*)
+        do (setf *latest-system* arg)
+           (if (find :quicklisp *features*)
                (funcall (read-from-string "ql:quickload") arg :silent (not (verbose)))
                (funcall (read-from-string "asdf:operate") (read-from-string "asdf:load-op") arg))
         while p))
@@ -356,6 +387,19 @@ have the latest asdf, and this file has a workaround for this.
   (declare (ignorable rest))
   (cl:write (cl:eval (read-from-string arg))))
 
+(defun hook (&rest argv)
+  (when *latest-system*
+    (let ((entry-point
+            (let (*read-eval*)
+              (ignore-errors (read-from-string (funcall (read-from-string "asdf/system:component-entry-point")
+                                                        (funcall (read-from-string "asdf:find-system")
+                                                                 *latest-system*)))))))
+      (when (verbose)
+        (format *error-output* "hook:~S ~S ~S~%" *latest-system* entry-point argv)
+        (finish-output))
+      (when entry-point
+        (funcall entry-point argv)))))
+
 (defun script (arg &rest rest)
   "load and evaluate the script"
   (setf *argv* rest)
@@ -384,12 +428,12 @@ have the latest asdf, and this file has a workaround for this.
                                 "(roswell:quit (cl:apply 'main roswell:*argv*))"
                                 "(setf roswell:*main* 'main)"))))))
              (setf *features* (remove :ros.script *features*)))))
-    (if (streamp arg)
-        (body arg)
-        (if (probe-file arg)
-            (with-open-file (in arg)
-              (body in))
-            (format t "script ~S does not exist~%" arg)))))
+    (cond ((streamp arg) (body arg))
+          ((and arg (probe-file arg))
+           (with-open-file (in arg)
+             (body in)))
+          (*latest-system* (apply 'hook (cons arg *argv*)))
+          (t (format t "script ~S does not exist~%" arg)))))
 
 (defun stdin (arg &rest rest)
   (declare (ignorable arg rest))
