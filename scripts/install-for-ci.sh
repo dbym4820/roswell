@@ -8,7 +8,9 @@ ROSWELL_REPO=${ROSWELL_REPO:-https://github.com/roswell/roswell}
 ROSWELL_BRANCH=${ROSWELL_BRANCH:-release}
 ROSWELL_INSTALL_DIR=${ROSWELL_INSTALL_DIR:-/usr/local}
 ROSWELL_PLATFORMHTML_BASE=${ROSWELL_PLATFORMHTML_BASE:-https://github.com/roswell/sbcl_bin/releases/download/files/sbcl-bin_uri.tsv}
-ROSWELL_SBCL_BIN_URI=${ROSWELL_SBCL_BIN_URI:-https://github.com/roswell/sbcl_bin/releases/download/}
+#ROSWELL_SBCL_BIN_URI=${ROSWELL_SBCL_BIN_URI:-https://github.com/roswell/sbcl_bin/releases/download/}
+ROSWELL_SBCL_BIN_URI=2.0.0
+
 ROSWELL_QUICKLISP_DIST_URI=${ROSWELL_QUICKLISP_DIST_URI:-http://beta.quicklisp.org/dist/quicklisp.txt}
 
 USE_LISP=$LISP
